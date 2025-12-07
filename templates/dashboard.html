@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>BlinkNet</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <style>
+        body { font-family: Arial, sans-serif; background: #0f172a; color: #f1f5f9; padding: 20px; }
+        input, button { padding: 5px; margin: 2px; border-radius: 4px; border: 1px solid #334155; }
+        button { cursor: pointer; background-color: #1e293b; color: #f1f5f9; }
+        .device-card summary { cursor: pointer; font-weight: bold; }
+        .device-card { background: #1e293b; padding: 10px; margin-bottom: 10px; border-radius: 6px; }
+        details > div { margin-top: 10px; }
+        #add-device-btn { font-size: 24px; padding: 5px 10px; margin-bottom: 20px; }
+        #add-device-modal { display:none; position:fixed; top:0; left:0; width:100%; height:100%; 
+            background: rgba(0,0,0,0.6); justify-content:center; align-items:center; }
+        #add-device-modal div { background:#1e293b; padding:20px; border-radius:8px; width:300px; color:#f1f5f9; }
+        #add-device-modal button { width:100%; margin-bottom:5px; }
+        #add-device-modal button.cancel { background:#f87171; }
+        .hamburger-menu { display:none; position:absolute; top:40px; left:0; background:#1e293b; border:1px solid #334155; border-radius:6px; min-width:150px; z-index:1000; }
+        .hamburger-menu a { display:block; padding:10px; color:#f1f5f9; text-decoration:none; }
+    </style>
+</head>
+<body>
+
+<h1>BlinkNet</h1>
+
+<!-- Hamburger Menu -->
+<div style="position: relative;">
+    <button id="hamburger-btn" style="font-size:24px; background:none; border:none; color:#f1f5f9; cursor:pointer;">☰</button>
+    <div id="hamburger-menu" class="hamburger-menu">
+        <a href="/">Dashboard</a>
+        <a href="/settings">Settings</a>
+        <a href="/about">About</a>
+        <a href="/logout">Logout</a>
+    </div>
+</div>
+
+<!-- Add this where you want the button, for example in the header or navigation -->
+<div style="position: absolute; top: 20px; right: 20px;">
+    <span>Welcome, {{ user.username }}!</span>
+    <a href="/change-password">
+        <button style="padding: 8px 16px; background-color: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; margin: 0 5px;">
+            Change Password
+        </button>
+    </a>
+    <a href="/logout">
+        <button style="padding: 8px 16px; background-color: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer;">
+            Logout
+        </button>
+    </a>
+</div>
+<!-- + Icon to open Add Device modal -->
+<button id="add-device-btn">➕ Add Device</button>
+
+<!-- Add Device Modal -->
+<div id="add-device-modal">
+    <div>
+        <h3>Add New Device</h3>
+        <form method="post" action="/add" id="add-device-form">
+            <input name="name" placeholder="Device Name" required style="width:92%; margin-bottom:5px;">
+            <input name="ip" placeholder="IP Address" required style="width:92%; margin-bottom:5px;">
+            <input name="protocol" placeholder="ssh / rdp / http" required style="width:92%; margin-bottom:5px;">
+            <input name="port" placeholder="Port" type="number" required style="width:92%; margin-bottom:10px;">
+            <button type="submit">Add Device</button>
+            <button type="button" class="cancel" id="close-modal">Cancel</button>
+        </form>
+    </div>
+</div>
+
+<!-- Device List -->
+<div id="devices-container">
+{% for device in devices %}
+<details class="device-card" id="device-{{ device.id }}">
+    <summary>
+        {{ device.name }} ({{ device.ip }}) - 
+        <span id="status-{{ device.id }}">?</span> | 
+        Latency: <span id="latency-{{ device.id }}">?</span> ms
+    </summary>
+
+    <!-- Expanded content -->
+    <div>
+        <canvas id="chart{{ device.id }}" width="300" height="50"></canvas>
+
+        <!-- Edit Form -->
+        <details style="margin-top:10px;">
+            <summary>Edit Device</summary>
+            <form method="post" action="/edit">
+                <input type="hidden" name="device_id" value="{{ device.id }}">
+                <input type="text" name="name" value="{{ device.name }}" required style="width:100%; margin-bottom:5px;">
+                <input type="text" name="ip" value="{{ device.ip }}" required style="width:100%; margin-bottom:5px;">
+                <input type="text" name="protocol" value="{{ device.protocol }}" required style="width:100%; margin-bottom:5px;">
+                <input type="number" name="port" value="{{ device.port }}" required style="width:100%; margin-bottom:10px;">
+                <button type="submit" style="width:100%;">Save</button>
+            </form>
+        </details>
+
+        <!-- Remove Form -->
+        <form method="post" action="/delete" onsubmit="return confirm('Are you sure you want to remove this device?');" style="margin-top:10px;">
+            <input type="hidden" name="device_id" value="{{ device.id }}">
+            <button type="submit" style="width:100%; background:#f87171;">Remove Device</button>
+        </form>
+    </div>
+</details>
+{% endfor %}
+</div>
+
+<script>
+let charts = {};
+
+// Hamburger toggle
+const hamburgerBtn = document.getElementById('hamburger-btn');
+const hamburgerMenu = document.getElementById('hamburger-menu');
+hamburgerBtn.onclick = () => {
+    hamburgerMenu.style.display = hamburgerMenu.style.display === 'block' ? 'none' : 'block';
+};
+
+// Modal logic
+const modal = document.getElementById('add-device-modal');
+const btn = document.getElementById('add-device-btn');
+const closeBtn = document.getElementById('close-modal');
+
+btn.onclick = () => { modal.style.display = 'flex'; };
+closeBtn.onclick = () => { modal.style.display = 'none'; };
+window.onclick = (e) => { if (e.target == modal) modal.style.display = 'none'; };
+
+// Update dashboard
+function updateDashboard() {
+    fetch('/api/status')
+    .then(res => res.json())
+    .then(data => {
+        data.forEach(device => {
+            const statusEl = document.getElementById(`status-${device.id}`);
+            const latencyEl = document.getElementById(`latency-${device.id}`);
+            if (statusEl) statusEl.innerText = device.is_online ? "🟢 Online" : "🔴 Offline";
+            if (latencyEl) latencyEl.innerText = device.latency !== null ? device.latency : "N/A";
+
+            const ctx = document.getElementById(`chart${device.id}`);
+            if (!ctx) return;
+            const chartCtx = ctx.getContext('2d');
+
+            if (!charts[device.id]) {
+                charts[device.id] = new Chart(chartCtx, {
+                    type: 'line',
+                    data: {
+                        labels: device.history.map(() => ''),
+                        datasets: [{
+                            data: device.history,
+                            borderColor: 'lime',
+                            backgroundColor: 'transparent',
+                            tension: 0.3
+                        }]
+                    },
+                    options: {
+                        plugins: { legend: { display: false } },
+                        scales: { x: { display: false }, y: { min: 0 } },
+                        animation: false
+                    }
+                });
+            } else {
+                charts[device.id].data.datasets[0].data = device.history;
+                charts[device.id].update();
+            }
+        });
+    });
+}
+setInterval(updateDashboard, 2000);
+updateDashboard();
+</script>
+<script src="/static/dashboard.js"></script>
+</body>
+</html>
